@@ -1,0 +1,56 @@
+name: RetailPulse CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Generate synthetic dataset
+        run: python data/generate_data.py
+
+      - name: Run ETL pipeline (build star schema)
+        run: python src/etl.py
+
+      - name: Run RFM segmentation
+        run: python src/rfm_analysis.py
+
+      - name: Run cohort analysis
+        run: python src/cohort_analysis.py
+
+      - name: Run sales forecasting
+        run: python src/forecasting.py
+
+      - name: Run KPI report
+        run: python src/kpi_report.py
+
+      - name: Run test suite
+        run: pytest tests/ -v
+
+      - name: Upload star-schema exports as build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: powerbi-tableau-exports
+          path: exports/

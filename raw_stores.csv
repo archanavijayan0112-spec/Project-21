@@ -1,0 +1,125 @@
+# RetailPulse
+
+**Sales & customer intelligence platform for multi-region e-commerce — Python ETL, RFM segmentation, cohort retention, demand forecasting, and Power BI / Tableau-ready exports.**
+
+[![CI](https://github.com/archanavijayan0112-spec/retailpulse-analytics/actions/workflows/ci.yml/badge.svg)](https://github.com/archanavijayan0112-spec/retailpulse-analytics/actions)
+![Python](https://img.shields.io/badge/python-3.11+-blue)
+![Tests](https://img.shields.io/badge/tests-16%20passing-brightgreen)
+![License](https://img.shields.io/badge/license-MIT-lightgrey)
+
+![Architecture](docs/img/architecture.png)
+
+---
+
+## What this is
+
+RetailPulse simulates a realistic 2-year, multi-region e-commerce operation (10 stores across India, 4,000 customers, 50K+ transaction line items with genuine seasonality — Diwali spikes, monsoon slowdowns) and runs it through a full analytics pipeline:
+
+- **ETL** — raw transactions → validated star schema (`fact_sales` + 4 dimension tables)
+- **RFM segmentation** — every customer scored on Recency/Frequency/Monetary and bucketed into Champions, At Risk, Lost, etc.
+- **Cohort retention analysis** — month-over-month retention heatmap by signup cohort
+- **Demand forecasting** — 90-day revenue forecast via Holt-Winters exponential smoothing, backtested
+- **BI-tool exports** — the same star schema imports cleanly into **Power BI** or **Tableau** (see [`docs/POWER_BI_GUIDE.md`](docs/POWER_BI_GUIDE.md))
+- **Interactive dashboard** — a self-contained HTML console (`dashboard/index.html`) if you don't have BI software installed
+
+## Live dashboard
+
+Open [`dashboard/index.html`](dashboard/index.html) in any browser — no server or build step required.
+
+## Headline numbers (synthetic dataset)
+
+| Metric | Value |
+|---|---|
+| Total net revenue | ₹15.0 Cr |
+| Total profit | ₹4.85 Cr (32.3% margin) |
+| Orders | 28,702 |
+| Active customers | 3,770 |
+| Avg order value | ₹5,232 |
+| YoY growth | +8.9% |
+| Top category | Electronics |
+| Top region | South |
+| 90-day forecast revenue | ₹2.44 Cr |
+
+## Analysis highlights
+
+<table><tr>
+<td><img src="docs/img/daily_revenue.png" width="440"></td>
+<td><img src="docs/img/rfm_segments.png" width="440"></td>
+</tr><tr>
+<td><img src="docs/img/cohort_heatmap.png" width="440"></td>
+<td><img src="docs/img/forecast.png" width="440"></td>
+</tr></table>
+
+**Key findings:**
+- Diwali season (Oct–Nov) drives ~1.6x baseline daily revenue; monsoon months (Jun–Jul) soften demand
+- The **Champions** segment (~21% of customers) drives the largest share of revenue — a clear retention-campaign target
+- Retention decays sharply after month 1 for most cohorts, suggesting a day-30 win-back offer could meaningfully lift LTV
+- 90-day Holt-Winters forecast, backtested MAPE ≈ 21% on a 30-day holdout
+
+Full walkthrough with charts and commentary: [`notebooks/RetailPulse_Analysis.ipynb`](notebooks/RetailPulse_Analysis.ipynb)
+
+## Project structure
+
+```
+retailpulse-analytics/
+├── data/
+│   └── generate_data.py        # synthetic dataset generator
+├── src/
+│   ├── etl.py                  # raw data -> star schema
+│   ├── rfm_analysis.py         # RFM customer segmentation
+│   ├── cohort_analysis.py      # monthly cohort retention
+│   ├── forecasting.py          # Holt-Winters 90-day forecast
+│   └── kpi_report.py           # headline KPI summary
+├── notebooks/
+│   └── RetailPulse_Analysis.ipynb
+├── exports/
+│   ├── powerbi/                # star schema CSVs for Power BI
+│   └── tableau/                # identical CSVs for Tableau
+├── dashboard/
+│   ├── index.html              # interactive console (Plotly.js)
+│   └── dashboard.js
+├── tests/
+│   └── test_pipeline.py        # 16 data-quality & pipeline tests
+├── docs/
+│   ├── POWER_BI_GUIDE.md       # relationship setup, DAX measures
+│   └── img/                    # generated chart images
+└── .github/workflows/ci.yml    # automated pipeline + test run on push
+```
+
+## Quickstart
+
+```bash
+git clone https://github.com/archanavijayan0112-spec/retailpulse-analytics.git
+cd retailpulse-analytics
+pip install -r requirements.txt
+
+# Run the full pipeline
+python data/generate_data.py     # generate synthetic transactions
+python src/etl.py                # build star schema
+python src/rfm_analysis.py       # customer segmentation
+python src/cohort_analysis.py    # retention analysis
+python src/forecasting.py        # 90-day forecast
+python src/kpi_report.py         # KPI summary
+
+# Run tests
+pytest tests/ -v
+
+# Open the dashboard
+open dashboard/index.html        # or just double-click it
+```
+
+To explore in Jupyter: `jupyter notebook notebooks/RetailPulse_Analysis.ipynb`
+
+To import into Power BI or Tableau, see [`docs/POWER_BI_GUIDE.md`](docs/POWER_BI_GUIDE.md).
+
+## Tech stack
+
+`Python` · `pandas` · `numpy` · `statsmodels` (Holt-Winters forecasting) · `matplotlib` · `Plotly.js` · `pytest` · `GitHub Actions` · Power BI / Tableau-ready star schema exports
+
+## Data note
+
+This project uses a **synthetic dataset** (see `data/generate_data.py`) generated with realistic seasonality, regional variance, and customer churn patterns for portfolio/demonstration purposes — no real customer or transaction data is used.
+
+## License
+
+MIT

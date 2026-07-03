@@ -1,0 +1,104 @@
+"""
+RetailPulse — Pipeline Tests
+Run with: pytest tests/ -v
+Assumes data/generate_data.py, src/etl.py, rfm_analysis.py, and
+cohort_analysis.py have already been run (see README quickstart / CI workflow).
+"""
+
+import os
+import sys
+import pandas as pd
+import pytest
+
+sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+
+EXPORTS = os.path.join(os.path.dirname(__file__), "..", "exports", "powerbi")
+
+
+def _path(name):
+    return os.path.join(EXPORTS, name)
+
+
+@pytest.fixture(scope="module")
+def fact_sales():
+    return pd.read_csv(_path("fact_sales.csv"))
+
+
+@pytest.fixture(scope="module")
+def dim_customer():
+    return pd.read_csv(_path("dim_customer.csv"))
+
+
+@pytest.fixture(scope="module")
+def dim_product():
+    return pd.read_csv(_path("dim_product.csv"))
+
+
+class TestStarSchemaIntegrity:
+    def test_fact_sales_exists_and_nonempty(self, fact_sales):
+        assert len(fact_sales) > 0
+
+    def test_no_negative_revenue(self, fact_sales):
+        assert (fact_sales["net_revenue"] >= 0).all()
+
+    def test_no_null_keys(self, fact_sales):
+        for col in ["order_id", "customer_id", "product_id", "store_id", "date_id"]:
+            assert fact_sales[col].isna().sum() == 0
+
+    def test_quantity_positive(self, fact_sales):
+        assert (fact_sales["quantity"] > 0).all()
+
+    def test_referential_integrity_customers(self, fact_sales, dim_customer):
+        orphans = set(fact_sales["customer_id"]) - set(dim_customer["customer_id"])
+        assert len(orphans) == 0, f"{len(orphans)} fact rows reference unknown customers"
+
+    def test_referential_integrity_products(self, fact_sales, dim_product):
+        orphans = set(fact_sales["product_id"]) - set(dim_product["product_id"])
+        assert len(orphans) == 0, f"{len(orphans)} fact rows reference unknown products"
+
+    def test_discount_within_bounds(self, fact_sales):
+        assert fact_sales["discount_pct"].between(0, 100).all()
+
+    def test_net_revenue_consistency(self, fact_sales):
+        expected = fact_sales["gross_revenue"] - fact_sales["discount_amount"]
+        assert ((fact_sales["net_revenue"] - expected).abs() < 0.01).all()
+
+
+class TestRFMSegmentation:
+    def test_rfm_output_exists(self):
+        assert os.path.exists(_path("customer_rfm_segments.csv"))
+
+    def test_rfm_scores_in_range(self):
+        rfm = pd.read_csv(_path("customer_rfm_segments.csv"))
+        for col in ["R_score", "F_score", "M_score"]:
+            assert rfm[col].between(1, 5).all()
+
+    def test_every_customer_has_segment(self, dim_customer):
+        rfm = pd.read_csv(_path("customer_rfm_segments.csv"))
+        assert rfm["segment"].isna().sum() == 0
+        assert set(rfm["customer_id"]).issubset(set(dim_customer["customer_id"]))
+
+
+class TestCohortAnalysis:
+    def test_cohort_output_exists(self):
+        assert os.path.exists(_path("cohort_retention_matrix.csv"))
+
+    def test_month_zero_retention_is_full(self):
+        cohort = pd.read_csv(_path("cohort_retention_matrix.csv"), index_col=0)
+        # Month 0 (signup month) retention should always be 100% by definition
+        assert (cohort.iloc[:, 0].dropna() == 1.0).all()
+
+
+class TestForecast:
+    def test_forecast_output_exists(self):
+        assert os.path.exists(_path("sales_forecast_90day.csv"))
+
+    def test_forecast_has_90_rows(self):
+        fc = pd.read_csv(_path("sales_forecast_90day.csv"))
+        assert len(fc) == 90
+
+    def test_forecast_bounds_sane(self):
+        fc = pd.read_csv(_path("sales_forecast_90day.csv"))
+        assert (fc["lower_80"] <= fc["forecast_revenue"]).all()
+        assert (fc["forecast_revenue"] <= fc["upper_80"]).all()
+        assert (fc["lower_80"] >= 0).all()

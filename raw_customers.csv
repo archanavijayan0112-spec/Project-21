@@ -1,0 +1,11 @@
+store_id,city,state,region
+S01,Kochi,Kerala,South
+S02,Thiruvananthapuram,Kerala,South
+S03,Bengaluru,Karnataka,South
+S04,Chennai,Tamil Nadu,South
+S05,Hyderabad,Telangana,South
+S06,Mumbai,Maharashtra,West
+S07,Pune,Maharashtra,West
+S08,Delhi,Delhi,North
+S09,Kolkata,West Bengal,East
+S10,Ahmedabad,Gujarat,West

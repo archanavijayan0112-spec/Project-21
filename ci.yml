@@ -1,0 +1,64 @@
+"""
+RetailPulse — Sales Forecasting
+Aggregates daily net revenue and forecasts the next 90 days using
+Holt-Winters triple exponential smoothing (captures trend + weekly
+seasonality). Also computes a simple backtest (last 30 days held out)
+to report MAPE.
+"""
+
+import pandas as pd
+import numpy as np
+from statsmodels.tsa.holtwinters import ExponentialSmoothing
+
+OUT = "exports/powerbi"
+
+
+def load_daily_revenue():
+    fact = pd.read_csv("exports/powerbi/fact_sales.csv")
+    dim_date = pd.read_csv("exports/powerbi/dim_date.csv", parse_dates=["date"])
+    fact = fact.merge(dim_date[["date_id", "date"]], on="date_id")
+    daily = fact.groupby("date")["net_revenue"].sum().asfreq("D").fillna(0)
+    return daily
+
+
+def backtest_mape(daily, holdout=30):
+    train, test = daily[:-holdout], daily[-holdout:]
+    model = ExponentialSmoothing(train, trend="add", seasonal="add",
+                                  seasonal_periods=7, damped_trend=True).fit()
+    pred = model.forecast(holdout)
+    mape = float(np.mean(np.abs((test.values - pred.values) / np.where(test.values == 0, 1, test.values))) * 100)
+    return mape
+
+
+def forecast(daily, periods=90):
+    model = ExponentialSmoothing(daily, trend="add", seasonal="add",
+                                  seasonal_periods=7, damped_trend=True).fit()
+    fc = model.forecast(periods)
+    ci_width = daily[-90:].std() * 1.28  # rough 80% interval band
+    result = pd.DataFrame({
+        "date": fc.index,
+        "forecast_revenue": fc.values.round(2),
+        "lower_80": (fc.values - ci_width).clip(min=0).round(2),
+        "upper_80": (fc.values + ci_width).round(2),
+    })
+    return result
+
+
+def main():
+    daily = load_daily_revenue()
+    mape = backtest_mape(daily)
+    print(f"[backtest] 30-day holdout MAPE: {mape:.1f}%")
+
+    fc = forecast(daily, periods=90)
+    fc.to_csv(f"{OUT}/sales_forecast_90day.csv", index=False)
+
+    hist = daily.reset_index()
+    hist.columns = ["date", "actual_revenue"]
+    hist.to_csv(f"{OUT}/daily_revenue_actuals.csv", index=False)
+
+    print(f"[forecast] Next 90 days total forecast revenue: ₹{fc['forecast_revenue'].sum():,.0f}")
+    print(f"[export] -> {OUT}/sales_forecast_90day.csv, daily_revenue_actuals.csv")
+
+
+if __name__ == "__main__":
+    main()

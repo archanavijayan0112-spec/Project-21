@@ -1,0 +1,162 @@
+"""
+RetailPulse — Synthetic Data Generator
+Generates a realistic 2-year multi-region e-commerce transaction dataset
+with seasonality, customer churn patterns, and regional variance.
+"""
+
+import numpy as np
+import pandas as pd
+from datetime import datetime, timedelta
+
+np.random.seed(42)
+
+# ---------------------------------------------------------------
+# Dimension: Products
+# ---------------------------------------------------------------
+CATEGORIES = {
+    "Electronics": [("Wireless Earbuds", 2499, 4999), ("Smartwatch", 3999, 12999),
+                    ("Bluetooth Speaker", 1499, 3999), ("Power Bank", 799, 1999),
+                    ("Laptop Sleeve", 499, 1299)],
+    "Fashion": [("Cotton T-Shirt", 399, 899), ("Denim Jacket", 1999, 3999),
+                ("Running Shoes", 1999, 4999), ("Backpack", 899, 2499),
+                ("Sunglasses", 599, 1999)],
+    "Home & Kitchen": [("Air Fryer", 3499, 7999), ("Non-stick Cookware Set", 1999, 4999),
+                       ("LED Desk Lamp", 699, 1599), ("Storage Organizer", 499, 1299),
+                       ("Ceramic Mug Set", 399, 899)],
+    "Beauty": [("Face Serum", 599, 1499), ("Hair Dryer", 999, 2999),
+               ("Sunscreen SPF50", 349, 799), ("Lipstick Set", 499, 1199)],
+    "Sports & Fitness": [("Yoga Mat", 699, 1499), ("Resistance Bands", 399, 999),
+                         ("Dumbbell Set", 1999, 4999), ("Water Bottle", 299, 799)],
+}
+
+products = []
+pid = 1
+for cat, items in CATEGORIES.items():
+    for name, lo, hi in items:
+        products.append({
+            "product_id": f"P{pid:04d}",
+            "product_name": name,
+            "category": cat,
+            "unit_price": round(np.random.uniform(lo, hi), 2),
+            "unit_cost": None,  # filled below
+        })
+        pid += 1
+products_df = pd.DataFrame(products)
+products_df["unit_cost"] = (products_df["unit_price"] * np.random.uniform(0.55, 0.75, len(products_df))).round(2)
+
+# ---------------------------------------------------------------
+# Dimension: Stores / Regions (India-wide + Kerala emphasis)
+# ---------------------------------------------------------------
+stores = [
+    {"store_id": "S01", "city": "Kochi", "state": "Kerala", "region": "South"},
+    {"store_id": "S02", "city": "Thiruvananthapuram", "state": "Kerala", "region": "South"},
+    {"store_id": "S03", "city": "Bengaluru", "state": "Karnataka", "region": "South"},
+    {"store_id": "S04", "city": "Chennai", "state": "Tamil Nadu", "region": "South"},
+    {"store_id": "S05", "city": "Hyderabad", "state": "Telangana", "region": "South"},
+    {"store_id": "S06", "city": "Mumbai", "state": "Maharashtra", "region": "West"},
+    {"store_id": "S07", "city": "Pune", "state": "Maharashtra", "region": "West"},
+    {"store_id": "S08", "city": "Delhi", "state": "Delhi", "region": "North"},
+    {"store_id": "S09", "city": "Kolkata", "state": "West Bengal", "region": "East"},
+    {"store_id": "S10", "city": "Ahmedabad", "state": "Gujarat", "region": "West"},
+]
+stores_df = pd.DataFrame(stores)
+
+# ---------------------------------------------------------------
+# Dimension: Customers
+# ---------------------------------------------------------------
+N_CUSTOMERS = 4000
+FIRST_NAMES = ["Aarav", "Vivaan", "Aditya", "Ananya", "Diya", "Ishaan", "Kavya", "Meera",
+               "Rohan", "Sara", "Arjun", "Priya", "Karthik", "Divya", "Nikhil", "Riya",
+               "Anjali", "Sanjay", "Neha", "Vikram"]
+LAST_NAMES = ["Nair", "Menon", "Pillai", "Sharma", "Iyer", "Reddy", "Kumar", "Das",
+              "Gupta", "Rao", "Krishnan", "Varma", "Joseph", "Thomas", "Patel"]
+
+signup_dates = pd.to_datetime(np.random.choice(
+    pd.date_range("2023-01-01", "2024-06-30"), N_CUSTOMERS))
+
+customers = pd.DataFrame({
+    "customer_id": [f"C{str(i).zfill(5)}" for i in range(1, N_CUSTOMERS + 1)],
+    "customer_name": [f"{np.random.choice(FIRST_NAMES)} {np.random.choice(LAST_NAMES)}" for _ in range(N_CUSTOMERS)],
+    "signup_date": signup_dates,
+    "home_store": np.random.choice(stores_df["store_id"], N_CUSTOMERS,
+                                    p=[0.16, 0.10, 0.14, 0.11, 0.10, 0.12, 0.08, 0.09, 0.05, 0.05]),
+    "loyalty_tier": np.random.choice(["Bronze", "Silver", "Gold", "Platinum"], N_CUSTOMERS,
+                                      p=[0.45, 0.30, 0.18, 0.07]),
+})
+
+# ---------------------------------------------------------------
+# Fact: Transactions (2 years, seasonality + regional variance + churn)
+# ---------------------------------------------------------------
+date_range = pd.date_range("2024-01-01", "2025-12-31")
+
+# Seasonality multiplier: festive months (Oct-Nov Diwali, Dec-Jan New Year) boosted
+def season_factor(d):
+    m = d.month
+    base = 1.0
+    if m in (10, 11):
+        base = 1.6  # Diwali season
+    elif m == 12:
+        base = 1.4  # year-end
+    elif m in (6, 7):
+        base = 0.85  # monsoon slowdown (relevant to Kerala)
+    return base * (1 + 0.05 * np.sin(2 * np.pi * d.dayofyear / 365))
+
+tier_weight = {"Bronze": 1.0, "Silver": 1.4, "Gold": 2.0, "Platinum": 3.0}
+
+rows = []
+order_id = 1
+for _, cust in customers.iterrows():
+    signup = cust["signup_date"]
+    active_days = (date_range[-1] - max(signup, date_range[0])).days
+    if active_days <= 0:
+        continue
+    # expected number of orders over lifetime, scaled by loyalty tier
+    lam = np.random.gamma(shape=2.0, scale=1.3) * tier_weight[cust["loyalty_tier"]]
+    n_orders = np.random.poisson(lam * (active_days / 365))
+    if n_orders == 0:
+        continue
+    possible_dates = pd.date_range(max(signup, date_range[0]), date_range[-1])
+    weights = np.array([season_factor(d) for d in possible_dates])
+    weights = weights / weights.sum()
+    order_dates = np.random.choice(possible_dates, size=min(n_orders, len(possible_dates)),
+                                    replace=False, p=weights)
+    for od in order_dates:
+        n_items = np.random.choice([1, 2, 3, 4], p=[0.5, 0.3, 0.15, 0.05])
+        chosen_products = products_df.sample(n_items)
+        for _, prod in chosen_products.iterrows():
+            qty = np.random.choice([1, 2, 3], p=[0.7, 0.22, 0.08])
+            discount_pct = np.random.choice([0, 0, 0, 5, 10, 15, 20], p=[0.4, 0.15, 0.1, 0.15, 0.1, 0.06, 0.04])
+            gross = round(prod["unit_price"] * qty, 2)
+            discount_amt = round(gross * discount_pct / 100, 2)
+            net = round(gross - discount_amt, 2)
+            rows.append({
+                "order_id": f"ORD{order_id:06d}",
+                "order_date": od,
+                "customer_id": cust["customer_id"],
+                "store_id": cust["home_store"],
+                "product_id": prod["product_id"],
+                "quantity": qty,
+                "unit_price": prod["unit_price"],
+                "discount_pct": discount_pct,
+                "gross_revenue": gross,
+                "discount_amount": discount_amt,
+                "net_revenue": net,
+                "unit_cost": prod["unit_cost"],
+            })
+        order_id += 1
+
+transactions = pd.DataFrame(rows)
+transactions["profit"] = (transactions["net_revenue"] - transactions["unit_cost"] * transactions["quantity"]).round(2)
+
+# ---------------------------------------------------------------
+# Save raw files
+# ---------------------------------------------------------------
+products_df.to_csv("data/raw_products.csv", index=False)
+stores_df.to_csv("data/raw_stores.csv", index=False)
+customers.to_csv("data/raw_customers.csv", index=False)
+transactions.to_csv("data/raw_transactions.csv", index=False)
+
+print(f"Generated {len(transactions):,} transaction line items")
+print(f"Customers: {len(customers):,} | Products: {len(products_df)} | Stores: {len(stores_df)}")
+print(f"Date range: {transactions['order_date'].min()} -> {transactions['order_date'].max()}")
+print(f"Total net revenue: ₹{transactions['net_revenue'].sum():,.2f}")

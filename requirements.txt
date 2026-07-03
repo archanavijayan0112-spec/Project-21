@@ -1,0 +1,117 @@
+"""
+RetailPulse — ETL Pipeline
+Transforms raw transaction data into a clean star schema:
+  fact_sales, dim_customer, dim_product, dim_store, dim_date
+
+Output is written to /exports/powerbi/ and /exports/tableau/ (identical
+schema — both tools consume flat, denormalized CSVs the same way) so the
+files can be imported directly into Power BI or Tableau for further
+visualization, or loaded with pandas for the Python-side analysis.
+"""
+
+import pandas as pd
+import numpy as np
+import os
+
+RAW = "data"
+OUT_PBI = "exports/powerbi"
+OUT_TBL = "exports/tableau"
+
+
+def load_raw():
+    tx = pd.read_csv(f"{RAW}/raw_transactions.csv", parse_dates=["order_date"])
+    customers = pd.read_csv(f"{RAW}/raw_customers.csv", parse_dates=["signup_date"])
+    products = pd.read_csv(f"{RAW}/raw_products.csv")
+    stores = pd.read_csv(f"{RAW}/raw_stores.csv")
+    return tx, customers, products, stores
+
+
+def clean_transactions(tx: pd.DataFrame) -> pd.DataFrame:
+    before = len(tx)
+    tx = tx.drop_duplicates()
+    tx = tx.dropna(subset=["order_id", "customer_id", "product_id", "net_revenue"])
+    tx = tx[tx["quantity"] > 0]
+    tx = tx[tx["net_revenue"] >= 0]
+    after = len(tx)
+    print(f"[clean] Removed {before - after} invalid/duplicate rows ({before} -> {after})")
+    return tx
+
+
+def build_dim_date(tx: pd.DataFrame) -> pd.DataFrame:
+    dates = pd.date_range(tx["order_date"].min(), tx["order_date"].max())
+    dim_date = pd.DataFrame({"date": dates})
+    dim_date["date_id"] = dim_date["date"].dt.strftime("%Y%m%d").astype(int)
+    dim_date["year"] = dim_date["date"].dt.year
+    dim_date["quarter"] = dim_date["date"].dt.quarter
+    dim_date["month"] = dim_date["date"].dt.month
+    dim_date["month_name"] = dim_date["date"].dt.strftime("%B")
+    dim_date["week"] = dim_date["date"].dt.isocalendar().week
+    dim_date["day_of_week"] = dim_date["date"].dt.day_name()
+    dim_date["is_weekend"] = dim_date["date"].dt.dayofweek >= 5
+    dim_date["is_festive_season"] = dim_date["month"].isin([10, 11, 12])
+    return dim_date[["date_id", "date", "year", "quarter", "month", "month_name",
+                      "week", "day_of_week", "is_weekend", "is_festive_season"]]
+
+
+def build_fact_sales(tx: pd.DataFrame) -> pd.DataFrame:
+    fact = tx.copy()
+    fact["date_id"] = fact["order_date"].dt.strftime("%Y%m%d").astype(int)
+    fact["margin_pct"] = np.where(fact["net_revenue"] > 0,
+                                   (fact["profit"] / fact["net_revenue"] * 100).round(2), 0)
+    cols = ["order_id", "date_id", "customer_id", "store_id", "product_id",
+            "quantity", "unit_price", "discount_pct", "gross_revenue",
+            "discount_amount", "net_revenue", "profit", "margin_pct"]
+    return fact[cols]
+
+
+def build_dim_customer(customers: pd.DataFrame, tx: pd.DataFrame) -> pd.DataFrame:
+    agg = tx.groupby("customer_id").agg(
+        total_orders=("order_id", "nunique"),
+        lifetime_revenue=("net_revenue", "sum"),
+        first_purchase=("order_date", "min"),
+        last_purchase=("order_date", "max"),
+    ).reset_index()
+    dim = customers.merge(agg, on="customer_id", how="left")
+    dim["lifetime_revenue"] = dim["lifetime_revenue"].fillna(0).round(2)
+    dim["total_orders"] = dim["total_orders"].fillna(0).astype(int)
+    return dim
+
+
+def build_dim_product(products: pd.DataFrame) -> pd.DataFrame:
+    products = products.copy()
+    products["margin_per_unit"] = (products["unit_price"] - products["unit_cost"]).round(2)
+    return products
+
+
+def main():
+    os.makedirs(OUT_PBI, exist_ok=True)
+    os.makedirs(OUT_TBL, exist_ok=True)
+
+    tx, customers, products, stores = load_raw()
+    tx = clean_transactions(tx)
+
+    dim_date = build_dim_date(tx)
+    fact_sales = build_fact_sales(tx)
+    dim_customer = build_dim_customer(customers, tx)
+    dim_product = build_dim_product(products)
+    dim_store = stores.copy()
+
+    tables = {
+        "fact_sales": fact_sales,
+        "dim_customer": dim_customer,
+        "dim_product": dim_product,
+        "dim_store": dim_store,
+        "dim_date": dim_date,
+    }
+
+    for name, df in tables.items():
+        df.to_csv(f"{OUT_PBI}/{name}.csv", index=False)
+        df.to_csv(f"{OUT_TBL}/{name}.csv", index=False)
+        print(f"[export] {name}: {len(df):,} rows -> {OUT_PBI}/{name}.csv")
+
+    print("\nStar schema ready for import into Power BI or Tableau.")
+    print("See docs/POWER_BI_GUIDE.md for relationship setup instructions.")
+
+
+if __name__ == "__main__":
+    main()
